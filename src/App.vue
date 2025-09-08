@@ -6,7 +6,7 @@ const examplePoll = {
 	title: "What shall we do tonight?",
 	proposals: [
 		{ title: "Go to Rave" },
-		{ title: "Go a nice restaurant and do some dinner" },
+		{ title: "Go a nice restaurant and do some dinner  and a very long text to test breaking of lines" },
 		{ title: "Cinema is nice" }
 	]
 }

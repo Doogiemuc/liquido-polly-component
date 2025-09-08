@@ -38,7 +38,7 @@ const POLL_STATUS = {
 	ELABORATION: "ELABORATION",
 	PREPARE_START: "PREPARE_START",  // this status only exists in the frontend. Here we ask for user's email
 	IN_VOTING: "VOTING",
-	CLOSED: "CLOSED"
+	FINISHED: "FINISHED"
 }
 
 const props = defineProps({
@@ -120,7 +120,7 @@ console.log("reactive poll", JSON.stringify(poll, null, 2))
 const user = reactive({
 	id: Date.now(),
 	name: "Donald Duck",
-	email: undefined
+	email: "dummy@domain.org"
 });
 
 const voteCounter = ref(0)  // This is only used to animate the "THX for voting text" after every click on "Cast Vote" button.
@@ -132,38 +132,36 @@ const isNew    			= computed(() => poll.status == POLL_STATUS.NEW);
 const inElaboration = computed(() => poll.status == POLL_STATUS.ELABORATION);
 const prepareStart	= computed(() => poll.status == POLL_STATUS.PREPARE_START);
 const inVoting 			= computed(() => poll.status == POLL_STATUS.IN_VOTING);
-const isClosed 			= computed(() => poll.status == POLL_STATUS.CLOSED);
+const isFinished 		= computed(() => poll.status == POLL_STATUS.FINISHED);
+// Poll.title must have at lest on non-whitespace charater and at least 5 chars
+const pollHasTitle  = computed(() => /\S/.test(poll.title) && poll.title.length > 5)  
 
-/** A poll needs at least two proposals */
+/** A poll needs at least a title and two proposals */
 const saveIsActive = computed(() => {
-	return propHasTitle(0) && propHasTitle(1);
+	return pollHasTitle && propHasTitle(0) && propHasTitle(1);
 });
 
-const sendToEmailActive = computed(() => {
+const userEmailIsValid = computed(() => {
 	return isEmail(user.email)
 })
 
 function propHasTitle(index) {
-	if (index >= poll.proposals.length) return false;
-	if (!poll.proposals[index].title) return false;
-	if (poll.proposals[index].title.trim() === "") return false;
-	return true;
+	const title = poll.proposals?.[index]?.title;
+  return typeof title === "string" && title.trim().length > 0;
 }
 
 /** Popup when user clicks save. */
-let askEmailToast;
+let askEmailModal;
 
 onMounted(() => {
-	const askEmailToastElem = document.getElementById("askEmailToast")
-	askEmailToast = bootstrap.Toast.getOrCreateInstance(askEmailToastElem)
-
+	askEmailModal = new bootstrap.Modal(document.getElementById('askEmailModal'), {})
 	const pollTitleInput = document.getElementById("pollTitleInput")
 	if (pollTitleInput) pollTitleInput.focus();
 });
 
 function addProposal() {
 	poll.proposals.push({
-		id: poll.proposals.length,
+		id: Date.now(),  // random unique ID
 		title: "",
 	});
 }
@@ -265,19 +263,23 @@ function editPoll() {
 	poll.status = POLL_STATUS.NEW
 }
 
-function clickStartPoll() {
+function clickStartPollButton() {
 	poll.status = POLL_STATUS.PREPARE_START
-	//console.log("clickStartPoll", askEmailToast)
-	askEmailToast.show()
+	askEmailModal.show()
 }
 
 function startPoll() {
 	//TODO: call backend, store user, send email, ...
+	askEmailModal.hide()
 	console.log("Sending an email to ", user.email)
 	poll.status = POLL_STATUS.IN_VOTING
 }
 
 function cancelStartPoll() {
+	poll.status = POLL_STATUS.ELABORATION
+}
+
+function devReopenPoll() {
 	poll.status = POLL_STATUS.ELABORATION
 }
 
@@ -290,8 +292,8 @@ function castVote() {
 	voteCounter.value++
 }
 
-function closePoll() {
-	poll.status = POLL_STATUS.CLOSED
+function finishPoll() {
+	poll.status = POLL_STATUS.FINISHED
 }
 
 /** Check if a string looks like an email adress */
@@ -338,11 +340,11 @@ function isEmail(s) {
 				</TransitionGroup>
 			</div>
 
-			<div v-if="inElaboration || prepareStart || isClosed" class="card-body">
+			<div v-if="inElaboration || prepareStart || isFinished" class="card-body">
 				<!-- read-only view of the poll -->
 				<div class="polly-proposals-wrapper position-relative">
 					<div v-for="(proposal, index) in poll.proposals" class="polly-proposal d-flex align-items-center">
-						<div v-if="isClosed" class="text-secondary me-2">
+						<div v-if="isFinished" class="text-secondary me-2">
 							{{ index+1 }}.
 						</div>
 						<div class="flex-grow-1 form-control readonly-proposal">
@@ -352,28 +354,34 @@ function isEmail(s) {
 				</div>
 			</div>
 
-			<div v-if="inVoting" class="card-body">
+			<div v-if="inVoting" class="card-body d-flex flex-row">
+				<div class="me-1">
+					<div v-for="(prop, index) in poll.proposals" :key="prop.id" 
+						class="form-control proposal-index-number">
+						{{ index+1 }}.
+					</div>
+				</div>
 				<div class="polly-proposals-wrapper">
 					<draggable 
+						id="draggableProposals"
 						v-model="poll.proposals" 
 						:animation="500"
+						class=""
 						ghost-class="ghost"
 						drag-class="drag"
 						chosen-class="chosen"
 						item-key="id"
 					>
 						<template #item="{element}">
-							<div class="polly-proposal cursor-move">
-								<div class="d-flex align-items-center position-relative">
-									<div class="proposal-bars">
-										<i class="fas fa-grip-vertical"></i>
-									</div>
-									<div class="arrow-up pos-top-middle">&nbsp;</div>
-									<div class="flex-grow-1 form-control sortable-proposal">
-										{{ element.title }}
-									</div>
-									<div class="arrow-up pos-bottom-middle-down">&nbsp;</div>
+							<div class="polly-proposal sortable-proposal d-flex align-items-center position-relative form-control">
+								<div class="arrow-up pos-top-middle">&nbsp;</div>
+								<div class="sortable-proposal-content">
+									{{ element.title }}
 								</div>
+								<div class="proposal-bars ms-1">
+									<i class="fas fa-grip-vertical"></i>
+								</div>
+								<div class="arrow-up pos-bottom-middle-down">&nbsp;</div>
 							</div>
 						</template>
 					</draggable>
@@ -387,11 +395,11 @@ function isEmail(s) {
 						&nbsp;
 						<Transition name="slide-up">
 							<div v-if="isNew">New Polly</div>
-							<div v-else-if="inElaboration">Polly not yet started</div>
-							<div v-else-if="prepareStart">Starting polly ...</div>
+							<div v-else-if="inElaboration">Poll not yet started</div>
+							<div v-else-if="prepareStart">Starting poll ...</div>
 							<div v-else-if="inVoting && !poll.alreadyVoted">Sort proposals</div>
 							<div v-else-if="inVoting &&  poll.alreadyVoted" :key="voteCounter">THX for voting!</div>
-							<div v-else-if="isClosed">Poll is closed ({{ poll.numVoters }} voters)</div>
+							<div v-else-if="isFinished">Poll is finished ({{ poll.numVoters }} voters)</div>
 							<div v-else>&nbsp;</div>
 						</Transition>
 					</div>
@@ -402,8 +410,7 @@ function isEmail(s) {
 							type="button"
 							class="btn btn-sm btn-primary save-button"
 						>
-							<i class="fa-regular fa-save"></i>
-							Save
+							<i class="fa-regular fa-save"></i>&nbsp;Save
 						</button>
 					</div>
 					<div v-if="inElaboration" class="text-end">
@@ -412,16 +419,14 @@ function isEmail(s) {
 							type="button"
 							class="btn btn-sm btn-secondary me-2"
 						>
-							<i class="fa-regular fa-edit"></i>
-							Edit
+							<i class="fa-regular fa-edit"></i>&nbsp;Edit
 						</button>
 						<button
-							@click="clickStartPoll"
+							@click="clickStartPollButton"
 							type="button"
 							class="btn btn-sm btn-primary"
 						>
-							<i class="fa-solid fa-play"></i>
-							Start
+							<i class="fa-solid fa-play"></i>&nbsp;Start Poll
 						</button>
 					</div>
 					<div v-if="prepareStart" class="text-end">
@@ -430,8 +435,7 @@ function isEmail(s) {
 							class="btn btn-sm btn-primary disabled"
 							disabled
 						>
-							<i class="fa-solid fa-play"></i>
-							Start
+							<i class="fa-solid fa-play"></i>&nbsp;Start Poll
 						</button>
 					</div>
 					<div v-if="inVoting" class="text-end">
@@ -443,20 +447,27 @@ function isEmail(s) {
 							<i class="fa-solid fa-up-right-from-square"></i>
 						</button>
 						<button
-							@click="closePoll"
+							@click="finishPoll"
 							type="button"
 							class="btn btn-sm btn-secondary me-2"
 						>
-							<i class="fa-regular fa-circle-check"></i>
-							Close
+							<i class="fa-regular fa-circle-check"></i>&nbsp;Finish Poll
 						</button>
+
+						<button
+							@click="devReopenPoll"
+							type="button"
+							class="btn btn-sm btn-outline"
+						>
+							ReOpen
+						</button>
+
 						<button
 							@click="castVote"
 							type="button"
 							class="btn btn-sm btn-primary"
 						>
-							<i class="fa-solid fa-person-booth"></i>
-							{{ poll.alreadyVoted ? "Update Vote" : "Cast Vote" }}
+							<i class="fa-solid fa-person-booth"></i>&nbsp;{{ poll.alreadyVoted ? "Update my vote" : "Cast this order" }}
 						</button>
 					</div>
 					
@@ -464,27 +475,38 @@ function isEmail(s) {
 			</div>
 		</div>
 
-		<!-- Bootstrap Toast: Ask user for his email -->
 		
-		<div class="toast-container askEmailToastContainer">
-			<div id="askEmailToast" class="toast" data-bs-autohide="false" role="alert" aria-live="assertive" aria-atomic="true">
-				<div class="toast-header bg-secondary-subtle">
-					<strong class="me-auto">Start Poll</strong>
-					<button type="button" class="btn-close" @click="cancelStartPoll" data-bs-dismiss="toast" aria-label="Close"></button>
-				</div>
-				<div class="toast-body">
-					Where can I send the link to your poll?
-					<div class="d-flex mt-2">
-						<div class="flex-grow-1">
-							<input type="email" v-model="user.email" class="form-control form-control-sm" placeholder="Your email" aria-lable="Your Email">
-						</div>
-						<div>
-							<button type="button" class="btn btn-primary btn-sm ms-2" data-bs-dismiss="toast" @click="startPoll" :disabled="!sendToEmailActive">Send</button>
+		<!-- Bootstrap Modal: Ask user for their email -->
+		<div class="modal fade" id="askEmailModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="askEmailModalLabel" aria-hidden="true">
+			<div class="modal-dialog">
+				<div class="modal-content">
+					<div class="modal-header bg-secondary-subtle">
+						<h5 class="modal-title" id="askEmailModalLabel">Start Poll</h5>
+						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" @click="cancelStartPoll"></button>
+					</div>
+					<div class="modal-body">
+						You’ll receive a private admin link to manage your poll, and a separate voting link to share with your friends.
+						<div class="d-flex mt-2">
+							<div class="flex-grow-1">
+								<input 
+									id="userEmailInput"
+									type="email" 
+									v-model="user.email"
+									class="form-control form-control-sm" 
+									placeholder="Your email" 
+									@keyup.enter="userEmailIsValid && startPoll()"
+									aria-label="Your Email">
+							</div>
+							<div>
+								<button type="button" class="btn btn-primary btn-sm ms-2" data-bs-dismiss="modal" @click="startPoll" :disabled="!userEmailIsValid">Send</button>
+							</div>
 						</div>
 					</div>
 				</div>
 			</div>
 		</div>
+
+
 
 		<pre class="mt-5"
 			>{{ poll }}
@@ -534,13 +556,15 @@ function isEmail(s) {
 	}
 	.sortable-proposal {
 		background-color: var(--proposal-bg);
+	}
+	.sortable-proposal-content {
+		flex-grow: 1;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 	.proposal-bars {
 		color: #CCC;
-		margin-right: 0.25rem;
 	}
 
 	.pos-top-middle {
@@ -571,7 +595,6 @@ function isEmail(s) {
 	.footer-status {
 		position: relative;
 		font-size: 0.8rem;
-		color: #CCC;
 	}
 	.footer-status div {
 		position: absolute;
@@ -579,18 +602,6 @@ function isEmail(s) {
 		top: 0;
 	}
 }
-
-.askEmailToastContainer {
-	position: absolute;
-	top: 20%;
-	left: 50%;
-	transform: translateX(-50%);
-}
-
-#askEmailToast {
-	background-color: white;
-}
-
 
 
 // ======== VUE List Transition - used for sortable proposals ======
@@ -601,17 +612,26 @@ function isEmail(s) {
 	padding: 0;
 	margin: 0;
 	list-style-type: none;
+	overflow: hidden;
 }
 
 .polly-proposal {
-	// height: 30px;
-	width: 100%;
+	//height: 3.5rem;
 	box-sizing: border-box;
-	
 }
+
 .polly-proposal:not(:last-child) {
 	margin-bottom: calc(var(--arrow-size)*2 + 5px);
 }
+
+.proposal-index-number:not(:last-child) {
+	margin-bottom: calc(var(--arrow-size)*2 + 5px);
+	//height: 3.5rem;
+	//padding-top: 6px;  // same as bootstrap form-control
+	//box-sizing: border-box;
+}
+
+
 
 /* 1. declare transition */
 .fade-move,
