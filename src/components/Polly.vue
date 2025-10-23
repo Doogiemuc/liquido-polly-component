@@ -158,7 +158,7 @@ Example "poll" object with its properties:
 				}
 			],
 			"status": "VOTING",
-			"alreadyVoted": false  // Has the current user already casted a vote in this poll
+			"alreadyVoted": false,  // Has the current user already casted a vote in this poll
 			"numVoters": 0,        // How many persons have casted their vote in this poll.
 		}
 
