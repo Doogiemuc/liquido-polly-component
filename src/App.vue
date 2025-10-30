@@ -1,6 +1,7 @@
 <script setup>
-//import HelloWorld from './components/HelloWorld.vue'
+import { ref, onMounted } from 'vue'
 import Polly from './components/Polly.vue'
+import * as pollService from './lib/pollService'
 
 const examplePoll = {
 	title: "What shall we do tonight?",
@@ -10,11 +11,48 @@ const examplePoll = {
 		{ title: "Cinema is nice" }
 	]
 }
+
+const pollData = ref(examplePoll)
+const mode = ref('admin')
+const pollToken = ref(null)
+const isLoading = ref(false)
+
+onMounted(async () => {
+	const urlParams = new URLSearchParams(window.location.search)
+	const voteToken = urlParams.get('vote')
+	const adminToken = urlParams.get('admin')
+
+	if (voteToken || adminToken) {
+		isLoading.value = true
+		try {
+			const token = voteToken || adminToken
+			const isAdmin = !!adminToken
+			const poll = await pollService.getPollByToken(token, isAdmin)
+
+			if (poll) {
+				pollData.value = poll
+				mode.value = isAdmin ? 'admin' : 'voter'
+				pollToken.value = token
+			} else {
+				console.error('Poll not found')
+			}
+		} catch (error) {
+			console.error('Error loading poll:', error)
+		} finally {
+			isLoading.value = false
+		}
+	}
+})
 </script>
 
 <template>
 	<div>
-		<Polly :poll="examplePoll"></Polly>
+		<div v-if="isLoading" class="text-center p-5">
+			<div class="spinner-border" role="status">
+				<span class="visually-hidden">Loading...</span>
+			</div>
+		</div>
+		<Polly v-else :poll="pollData" :mode="mode" :pollToken="pollToken"></Polly>
 	</div>
 </template>
 

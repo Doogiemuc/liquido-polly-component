@@ -8,16 +8,15 @@
  */
 
 import {
-  //ref,
+  ref,
   reactive,
   computed,
-  //	watch,
   onMounted,
 } from 'vue';
 import { VueDraggableNext as draggable } from 'vue-draggable-next';
-//import * as bootstrap from 'bootstrap';
 
 import liquidoInput from './liquido-input.vue';
+import * as pollService from '../lib/pollService';
 
 // TODO: Not yet implemented:  Types of polls
 // "CHOOSE_ONE": Each voter has one vote that he can give to exactly one proposal.
@@ -125,11 +124,19 @@ const POLL_STATUS = {
 };
 
 const props = defineProps({
-  /* We just simply accept one large poll JSON object as input. This makes updating it really easy. */
   poll: {
     type: Object,
     required: true,
   },
+  mode: {
+    type: String,
+    default: 'admin',
+    validator: (value) => ['admin', 'voter'].includes(value)
+  },
+  pollToken: {
+    type: String,
+    default: null
+  }
 });
 
 // The prop is the initial value. Here we copy that to a local proxy that can change.
@@ -190,12 +197,16 @@ for (let i = 0; i < poll.proposals.length || i < 2; i++) {
 if (poll.status == POLL_STATUS.NEW && propHasTitle(poll.proposals.length - 1))
   addProposal();
 
-//TODO: Dummy user for testing
 const user = reactive({
   id: Date.now(),
   name: 'Donald Duck',
   email: 'dummy@domain.org',
 });
+
+const isAdminMode = computed(() => props.mode === 'admin');
+const isVoterMode = computed(() => props.mode === 'voter');
+const voterId = ref(null);
+const isSavingVote = ref(false);
 
 // ========== Computed Properties ===========
 
@@ -227,7 +238,7 @@ function propHasTitle(index) {
 /** Popup when user clicks save. */
 let askEmailModal;
 
-onMounted(() => {
+onMounted(async () => {
   console.log('Polly poll', poll);
   askEmailModal = new bootstrap.Modal(
     document.getElementById('askEmailModal'),
@@ -235,6 +246,16 @@ onMounted(() => {
   );
   const pollTitleInput = document.getElementById('pollTitleInput');
   if (pollTitleInput) pollTitleInput.focus();
+
+  if (isVoterMode.value && props.pollToken) {
+    voterId.value = getOrCreateVoterId();
+    try {
+      const alreadyVoted = await pollService.hasVoted(poll.id, voterId.value);
+      poll.alreadyVoted = alreadyVoted;
+    } catch (error) {
+      console.error('Error checking vote status:', error);
+    }
+  }
 });
 
 function addProposal() {
@@ -348,11 +369,23 @@ function clickStartPollButton() {
   //Debug: poll.status = POLL_STATUS.IN_VOTING
 }
 
-function startPoll() {
-  //TODO: call backend, store user, send email, ...
-  askEmailModal.hide();
-  console.log('Sending an email to ', user.email);
-  poll.status = POLL_STATUS.IN_VOTING;
+async function startPoll() {
+  try {
+    const pollData = await pollService.createPoll(
+      poll.title,
+      poll.proposals.filter(p => p.title.trim()),
+      user.email
+    );
+    askEmailModal.hide();
+    console.log('Poll created:', pollData);
+    console.log('Admin link: ?admin=' + pollData.admin_token);
+    console.log('Voter link: ?vote=' + pollData.vote_token);
+    poll.status = POLL_STATUS.IN_VOTING;
+    poll.id = pollData.id;
+  } catch (error) {
+    console.error('Error starting poll:', error);
+    alert('Failed to start poll. Please try again.');
+  }
 }
 
 function cancelStartPoll() {
@@ -363,15 +396,41 @@ function devReopenPoll() {
   poll.status = POLL_STATUS.ELABORATION;
 }
 
-//TODO: send request to backend.
-function castVote() {
-  // will then receive an updated poll with current votes, that we mock here
-  poll.numVoters++;
-  poll.alreadyVoted = true;
+async function castVote() {
+  if (isSavingVote.value) return;
+
+  isSavingVote.value = true;
+  try {
+    const voteOrder = poll.proposals.map(p => p.id);
+    await pollService.castVote(poll.id, voterId.value, voteOrder);
+    poll.numVoters++;
+    poll.alreadyVoted = true;
+  } catch (error) {
+    console.error('Error casting vote:', error);
+    alert('Failed to cast vote. Please try again.');
+  } finally {
+    isSavingVote.value = false;
+  }
 }
 
-function finishPoll() {
-  poll.status = POLL_STATUS.FINISHED;
+function getOrCreateVoterId() {
+  const storageKey = `polly_voter_${poll.id}`;
+  let id = localStorage.getItem(storageKey);
+  if (!id) {
+    id = pollService.generateVoterId();
+    localStorage.setItem(storageKey, id);
+  }
+  return id;
+}
+
+async function finishPoll() {
+  try {
+    await pollService.updatePollStatus(poll.id, 'FINISHED');
+    poll.status = POLL_STATUS.FINISHED;
+  } catch (error) {
+    console.error('Error finishing poll:', error);
+    alert('Failed to finish poll. Please try again.');
+  }
 }
 
 /** Check if a string looks like an email adress */
@@ -479,19 +538,15 @@ function isEmail(s) {
             itemKey="id"
             :animation="500"
             can-scroll-x="false"
+            :disabled="poll.alreadyVoted"
           >
             <div
               v-for="prop in poll.proposals"
-              class="polly-proposal sortable-proposal d-flex align-items-center position-relative form-control border-0"
+              :class="['polly-proposal sortable-proposal d-flex align-items-center position-relative form-control border-0', { 'voted-disabled': poll.alreadyVoted }]"
             >
-              <!-- div class="arrow-triangle pos-top-middle">&nbsp;</div -->
               <div class="sortable-proposal-content">
                 {{ prop.title }}
               </div>
-
-              
-
-              <!-- div class="arrow-triangle pos-bottom-middle-down">&nbsp;</div -->
             </div>
           </draggable>
         </div>
@@ -540,6 +595,7 @@ function isEmail(s) {
           </div>
           <div v-if="inVoting" class="text-end">
             <button
+              v-if="isAdminMode"
               @click="finishPoll"
               type="button"
               class="btn btn-sm btn-secondary me-2"
@@ -553,11 +609,15 @@ function isEmail(s) {
               @click="castVote"
               type="button"
               class="btn btn-sm btn-primary"
+              :disabled="isSavingVote"
             >
               <i class="fa-solid fa-person-booth"></i>&nbsp;{{
-                loc('CastVote')
+                isSavingVote ? 'Saving...' : loc('CastVote')
               }}
             </button>
+            <div v-if="poll.alreadyVoted && isVoterMode" class="text-success">
+              <i class="fa-solid fa-check-circle"></i>&nbsp;{{ loc('ThxForVoting') }}
+            </div>
           </div>
           <div v-if="isFinished" class="text-end">
             <i class="fa-solid fa-person-booth"></i>&nbsp;{{
@@ -741,6 +801,11 @@ $polly-proposal-margin-bottom: 16px;
 // additional styles for sortable proposals
 .sortable-proposal {
   background-color: $proposal-bg !important;
+
+  &.voted-disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 }
 
 .sortable-proposal-content {
